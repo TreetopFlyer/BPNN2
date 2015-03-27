@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html>
+	<head>
+		<script src="http://code.jquery.com/jquery-1.11.2.min.js"></script>
+	</head>
+	<body>
+	
+	
+	<script>
+		var Bounds = {};
+		Bounds.Create = function(inDimensions)
+		{
+			var i;
+			var obj = {};
+			obj.Min = [];
+			obj.Max = [];
+			obj.Range = [];
+			for(i=0; i<inDimensions.length; i++)
+			{
+				obj.Min[i] = 999999;
+				obj.Max[i] = -999999;
+				obj.Range[i] = 0;
+			}
+			return obj;
+		};
+		Bounds.Adjust = function(inBounds, inVector)
+		{
+			var i;
+			for(i=0; i<inVector.length; i++)
+			{
+				if(inBounds.Min[i] > inVector[i])
+					inBounds.Min[i] = inVector[i];
+				
+				if(inBounds.Max[i] < inVector[i])
+					inBounds.Max[i] = inVector[i];
+					
+				inBounds.Range[i] = inBounds.Max[i] - inBounds.Min[i];
+			}
+		};
+		Bounds.GlobalToLocal = function(inBounds, inVector)
+		{
+			var out;
+			var i;
+			
+			out = [];
+			for(i=0; i<inVector.length; i++)
+			{	
+				out[i] = (inVector[i] - inBounds.Min[i])/inBounds.Range[i];
+			}
+			
+			return out;
+		};
+		Bounds.LocalToGlobal = function(inBounds, inVector)
+		{
+			var out;
+			var i;
+			
+			out = [];
+			for(i=0; i<inVector.length; i++)
+			{
+				out[i] = inBounds.Min[i] + inVector[i]*inBounds.Range[i];
+			}
+			
+			return out;
+		};
+	</script>
+	
+		<script>
+			
+			var Remapper = {};
+			Remapper.Instances = [];
+			Remapper.Create = function()
+			{
+				var obj = {};
+				obj.A = [];
+				obj.B = [];
+				Remapper.Instances.push(obj);
+				return obj;
+			};
+			Remapper.AddDimension = function(inRemapper, inAMin, inAMax, inBMin, inBMax)
+			{
+				inRemapper.A.push({Min:inAMin, Max:inAMax, Range:inAMax - inAMin});
+				inRemapper.B.push({Min:inBMin, Max:inBMax, Range:inBMax - inBMin});
+			};
+			Remapper.Lerp = function(inValue, inRange)
+			{
+				return inRange.Min + inValue*(inRange.Range);
+			};
+			Remapper.RemapComponent = function(inFrom, inTo, inValue)
+			{
+				return inTo.Min + ((inValue - inFrom.Min)/(inFrom.Range))*inTo.Range;
+			};
+			Remapper.RemapVector = function(inFrom, inTo, inVector)
+			{
+				var i;
+				var out = [];
+				for(i=0; i<inVector.length; i++)
+					out[i] = Remapper.RemapComponent(inFrom[i], inTo[i], inVector[i]);
+				return out;
+			};
+			Remapper.AToB = function(inRemapper, inVector)
+			{
+				return Remapper.RemapVector(inRemapper.A, inRemapper.B, inVector);
+			};
+			Remapper.BToA = function(inRemapper, inVector)
+			{
+				return Remapper.RemapVector(inRemapper.B, inRemapper.A, inVector);
+			};
+			
+
+			var Rasterizer = {};
+			Rasterizer.Instances = [];
+			Rasterizer.UpdateMapping = function(inRasterizer)
+			{
+				inRasterizer.Mapping.Remapper = Remapper.Create();
+				Remapper.AddDimension(inRasterizer.Mapping.Remapper, inRasterizer.Mapping.MathSpace.Min.X, inRasterizer.Mapping.MathSpace.Max.X, inRasterizer.Mapping.ScreenSpace.Min.X, inRasterizer.Mapping.ScreenSpace.Max.X);
+				Remapper.AddDimension(inRasterizer.Mapping.Remapper, inRasterizer.Mapping.MathSpace.Min.Y, inRasterizer.Mapping.MathSpace.Max.Y, inRasterizer.Mapping.ScreenSpace.Min.Y, inRasterizer.Mapping.ScreenSpace.Max.Y);
+		
+				inRasterizer.Canvas.WidthScreen = inRasterizer.Mapping.Remapper.B[0].Range;
+				inRasterizer.Canvas.HeightScreen = inRasterizer.Mapping.Remapper.B[1].Range;
+				inRasterizer.Canvas.WidthBitmap = inRasterizer.Canvas.WidthScreen*inRasterizer.Mapping.PixelDensity;
+				inRasterizer.Canvas.HeightBitmap = inRasterizer.Canvas.HeightScreen*inRasterizer.Mapping.PixelDensity;				
+				
+				inRasterizer.Canvas.JQ.attr({
+					width:inRasterizer.Canvas.WidthBitmap,
+					height:inRasterizer.Canvas.HeightBitmap
+				});
+				inRasterizer.Canvas.JQ.css({
+					left:inRasterizer.Mapping.ScreenSpace.Min.X+"px",
+					top:inRasterizer.Mapping.ScreenSpace.Min.Y+"px",
+					width:inRasterizer.Canvas.WidthScreen+"px",
+					height:inRasterizer.Canvas.HeightScreen+"px"
+				});
+				
+			};
+			Rasterizer.FillStyle = function(inRasterizer, inR, inG, inB)
+			{
+				inR = Math.floor(inR*255);
+				inG = Math.floor(inG*255);
+				inB = Math.floor(inB*255);
+				inRasterizer.Canvas.Context.fillStyle = "rgba("+inR+","+inG+","+inB+",255)";				
+			};
+			Rasterizer.ColorClear = function(inRasterizer, inR, inG, inB)
+			{
+				Rasterizer.FillStyle(inRasterizer, inR, inG, inB);
+				inRasterizer.Canvas.Context.fillRect( 0, 0, inRasterizer.Canvas.WidthBitmap, inRasterizer.Canvas.HeightBitmap);
+			};
+			Rasterizer.ColorSet = function(inRasterizer, inR, inG, inB, inX, inY)
+			{
+				Rasterizer.FillStyle(inRasterizer, inR, inG, inB);
+				inRasterizer.Canvas.Context.fillRect( inX, inY, 1, 1 );
+			};
+			Rasterizer.Iterate = function(inRasterizer, inFunction)
+			{
+				var x, y;
+				var screenX, screenY;
+				var color;
+				var input;
+				var output;
+				for(x=0; x<inRasterizer.Canvas.WidthBitmap; x++)
+				{
+					screenX = Remapper.Lerp(x/inRasterizer.Canvas.WidthBitmap, inRasterizer.Mapping.Remapper.B[0]);
+					for(y=0; y<inRasterizer.Canvas.HeightBitmap; y++)
+					{
+						screenY = Remapper.Lerp(y/inRasterizer.Canvas.HeightBitmap, inRasterizer.Mapping.Remapper.B[1]);
+						input = Remapper.BToA(inRasterizer.Mapping.Remapper, [screenX, screenY]);
+						output = inFunction(input);
+						if(output)
+						{
+							Rasterizer.ColorSet(inRasterizer, output[0], output[1], output[2], x, y);
+						}
+					}
+				};
+			};
+			Rasterizer.Point = function(inRasterizer, inPoint)
+			{
+				
+			};
+			Rasterizer.Plot = function(inFunction)
+			{
+				var x, y;
+				var screenX, screenY;
+				var color;
+				var input;
+				var output;
+				for(x=0; x<inRasterizer.Canvas.WidthBitmap; x++)
+				{
+					screenX = Remapper.Lerp(x/inRasterizer.Canvas.WidthBitmap, inRasterizer.Mapping.Remapper.B[0]);
+					input = Remapper.BToA(inRasterizer.Mapping.Remapper, [screenX, 0]);
+					output = inFunction(input[0]);
+					
+					if(output)
+					{
+						Rasterizer.ColorSet(inRasterizer, output[0], output[1], output[2], x, y);
+					}					
+				};
+			};
+			Rasterizer.Create = function(inJQParent)
+			{
+				var obj = {};
+				
+				obj.Mapping = {};
+				obj.Mapping.Remapper = false;
+				obj.Mapping.MathSpace = {};
+				obj.Mapping.MathSpace.Min = {X:-10, Y:-10};
+				obj.Mapping.MathSpace.Max = {X:10, Y:10};
+				obj.Mapping.ScreenSpace = {};
+				obj.Mapping.ScreenSpace.Min = {X:0, Y:0};
+				obj.Mapping.ScreenSpace.Max = {X:1024, Y:768};
+				obj.Mapping.PixelDensity = 0.1;
+				
+				obj.Canvas = {};
+				obj.Canvas.JQ = $("<canvas></canvas>");
+				obj.Canvas.Width = false;
+				obj.Canvas.Height = false;
+				inJQParent.append(obj.Canvas.JQ);
+				obj.Canvas.Context = obj.Canvas.JQ.get(0).getContext("2d");
+			
+				Rasterizer.UpdateMapping(obj);
+				Rasterizer.ColorClear(obj, 0.5, 0.5, 0.5);
+				
+				Rasterizer.Instances.push(obj);
+				return obj;
+			};
+
+		</script>
+	
+		<script>
+
+var BPNN = {};
+
+BPNN.Neuron = {};
+BPNN.Neuron.Create = function(inDimensions)
+{
+	var i;
+	var obj = {};
+	obj.Weights = [];
+	obj.Bias = Math.random()-0.5;
+	obj.LearningRate = 0.1;
+	for(i=0; i<inDimensions; i++)
+	{
+		obj.Weights[i] = Math.random()-0.5;
+	}
+	obj.OutputLinear = 0;
+	obj.OutputSigmoid = 0;
+	obj.OutputSigmoidDeriv = 0;
+	return obj;
+};
+
+BPNN.Layer = {};
+BPNN.Layer.Create = function(inDimensionsInput, inDimensionsOutput)
+{
+	var i;
+	var obj = {};
+	obj.ObservationIn = [];
+	obj.ObservationOut = [];
+	obj.ErrorIn = [];
+	obj.ErrorOut = [];
+	obj.Members = [];
+	for(i=0; i<inDimensionsOutput; i++)
+	{
+		obj.Members.push(BPNN.Neuron.Create(inDimensionsInput));
+		
+		obj.ObservationOut[i] = 0;
+		obj.ErrorIn[i] = 0;
+	}
+	for(i=0; i<inDimensionsInput; i++)
+	{
+		obj.ObservationIn[i] = 0;
+		obj.ErrorOut[i] = 0;
+	}
+	return obj;
+};
+BPNN.Layer.Observe = function(inLayer)
+{
+	var i, j;
+	var neuron;
+	for(i=0; i<inLayer.Members.length; i++)
+	{
+		neuron = inLayer.Members[i];
+		neuron.OutputLinear = 0;
+		for(j=0; j<neuron.Weights.length; j++)
+		{
+			neuron.OutputLinear += inLayer.ObservationIn[j] * neuron.Weights[j];
+		}
+		neuron.OutputLinear -= neuron.Bias;
+		neuron.OutputSigmoid = 1 / (1+Math.pow(Math.E, -neuron.OutputLinear));
+		neuron.OutputSigmoidDeriv = neuron.OutputSigmoid * (1 - neuron.OutputSigmoid);
+		inLayer.ObservationOut[i] = neuron.OutputSigmoid;
+	}
+};
+BPNN.Layer.Learn = function(inLayer)
+{
+	var i, j;
+	var neuron;
+	// reset error out
+	for(i=0; i<inLayer.ErrorOut.length; i++)
+	{
+		inLayer.ErrorOut[i] = 0;
+	}
+	// rebuild error out
+	for(i=0; i<inLayer.ErrorIn.length; i++)
+	{
+		neuron = inLayer.Members[i];
+		for(j=0; j<neuron.Weights.length; j++)
+		{
+			inLayer.ErrorOut[j] += neuron.OutputSigmoidDeriv * neuron.Weights[j] * inLayer.ErrorIn[i];
+			neuron.Weights[j] -= inLayer.ObservationIn[j] * inLayer.ErrorIn[i] * neuron.LearningRate;
+		}
+		neuron.Bias -= inLayer.ErrorIn[i] * neuron.LearningRate;
+	}
+};
+
+BPNN.Network = {};
+BPNN.Network.Create = function()
+{
+	var i;
+	var layer;
+	var obj = {};
+	obj.LearningRate = 0;
+	obj.Layers = [];
+	for(i=1; i<arguments.length; i++)
+	{
+		layer = BPNN.Layer.Create(arguments[i-1], arguments[i]);
+		obj.Layers.push( layer );
+	}
+	for(i=0; i<obj.Layers.length-1; i++)
+	{
+		obj.Layers[i+1].ObservationIn = obj.Layers[i].ObservationOut;
+		obj.Layers[i].ErrorIn = obj.Layers[i+1].ErrorOut;
+	}
+	obj.LayerIn = obj.Layers[0];
+	obj.LayerOut = obj.Layers[obj.Layers.length-1];
+	return obj;
+};
+BPNN.Network.Observe = function(inNetwork, inVector)
+{
+	var i;	
+	inNetwork.LayerIn.ObservationIn = inVector;
+	BPNN.Layer.Observe(inNetwork.LayerIn);
+	for(i=1; i<inNetwork.Layers.length; i++)
+	{
+		BPNN.Layer.Observe(inNetwork.Layers[i]);
+	}
+};
+BPNN.Network.Learn = function(inNetwork, inVector)
+{
+	var i;
+	for(i=0; i<inVector.length; i++)
+	{
+		inNetwork.LayerOut.ErrorIn[i] = inNetwork.LayerOut.ObservationOut[i] - inVector[i];
+	}
+	for(i=inNetwork.Layers.length-1; i>=0; i--)
+	{
+		BPNN.Layer.Learn(inNetwork.Layers[i]);
+	}
+};
+BPNN.Network.SetLearningRate = function(inNetwork, inAmount)
+{
+	
+};
+
+BPNN.TrainingSet = {};
+BPNN.TrainingSet.Create = function(inDimensionsOut, inDimensionsIn)
+{
+	var obj = {};
+	obj.MembersInRaw = []
+	obj.MembersIn = [];
+	obj.MembersOut = [];
+	
+	// this is used to normalize the training points, but we only need to do this for the inputs
+	obj.Min = [];
+	obj.Max = [];
+	var i;
+	for(i=0; i<inDimensionsIn; i++)
+	{
+		obj.Min[i] = 99999;
+		obj.Max[i] = -99999;
+	}
+	return obj;
+};
+BPNN.TrainingSet.Add = function(inTrainingSet, inVectorOut, inVectorIn)
+{
+	inTrainingSet.MembersInRaw.push(inVectorIn);
+	inTrainingSet.MembersOut.push(inVectorOut);
+	var i;
+	for(i=0; i<inVectorIn.length; i++)
+	{
+		if(inVectorIn[i] < inTrainingSet.Min[i])
+			inTrainingSet.Min[i] = inVectorIn[i];
+			
+		if(inVectorIn[i] > inTrainingSet.Max[i])
+			inTrainingSet.Max[i] = inVectorIn[i];		
+	}
+};
+BPNN.TrainingSet.Normalize = function(inTrainingSet)
+{
+	// make all the points fit from -1 to +1 in each dimension
+	var i, j;
+	var transformed;
+	for(i=0; i<inTrainingSet.MembersInRaw.length; i++)
+	{
+		transformed = [];
+		for(j=0; j<inTrainingSet.Min.length; j++)
+		{
+			transformed[j] = ((inTrainingSet.MembersInRaw[i][j] - inTrainingSet.Min[j])/(inTrainingSet.Max[j] - inTrainingSet.Min[j]))*2 - 1;
+		}
+		inTrainingSet.MembersIn[i] = transformed;
+	}
+};
+BPNN.TrainingSet.Iterate = function(inNetwork, inTrainingSet)
+{
+	var i;
+	for(i=0; i<inTrainingSet.MembersIn.length; i++)
+	{
+		BPNN.Network.Observe(inNetwork, inTrainingSet.MembersIn[i]);
+		BPNN.Network.Learn(inNetwork, inTrainingSet.MembersOut[i]);
+	}
+};
+
+		</script>
+		<script>
+		
+var t1 = BPNN.TrainingSet.Create(3, 2);
+BPNN.TrainingSet.Add(t1, [1, 0, 0], [0, 0]);
+BPNN.TrainingSet.Add(t1, [1, 0, 0], [1, 0]);
+BPNN.TrainingSet.Add(t1, [1, 0, 0], [5, 0]);
+BPNN.TrainingSet.Add(t1, [1, 0, 0], [-2, 0]);
+BPNN.TrainingSet.Add(t1, [1, 0, 0], [-1, 10]);
+BPNN.TrainingSet.Add(t1, [0, 1, 0], [0, 20]);
+BPNN.TrainingSet.Add(t1, [0, 1, 0], [1, 20]);
+BPNN.TrainingSet.Add(t1, [0, 1, 0], [5, 20]);
+BPNN.TrainingSet.Add(t1, [0, 1, 0], [-2, 20]);
+BPNN.TrainingSet.Add(t1, [0, 1, 0], [-1, 20]);
+BPNN.TrainingSet.Normalize(t1);
+		
+var n1 = BPNN.Network.Create(2, 50, 3);
+
+var r1 = Rasterizer.Create($("body"));
+r1.Mapping.MathSpace.Min = {X:-2, Y:-2};
+r1.Mapping.MathSpace.Max = {X:2, Y:2};
+Rasterizer.UpdateMapping(r1);
+Rasterizer.ColorClear(r1, 0, 0, 0);
+
+var time1 = setInterval(function(){
+	BPNN.TrainingSet.Iterate(n1, t1);
+	Rasterizer.Iterate(r1, function(inCoords)
+	{
+		BPNN.Network.Observe(n1, inCoords);
+		return n1.LayerOut.ObservationOut;
+	});
+}, 100);
+
+
+		</script>
+	</body>
+</html>
